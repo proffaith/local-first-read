@@ -1,0 +1,273 @@
+{% extends "local_eval/base.html" %}
+{% from "local_eval/_run_macros.html" import class_toolbar, class_toggle_script, graded_line %}
+{% block title %}Run {{ run_id }}{% endblock %}
+{% block head %}
+<style>
+  .files-head { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; margin:26px 0 8px; }
+  .files-head h2 { margin:0; }
+  .files-head .check { margin:0; font-size:14px; }
+  /* one tbody per submission: its numbers, then the model's rubric read */
+  #files tbody td { border-bottom:none; }
+  #files tbody tr:last-child td { border-bottom:1px solid var(--line); }
+  #files tr.read td { padding-top:0; }
+  ul.read { list-style:none; margin:0; padding:0 0 4px 14px; border-left:3px solid var(--line); }
+  ul.read li { margin:3px 0; font-size:14px; line-height:1.45; }
+  ul.read .lvl { font-weight:700; padding:1px 7px; border-radius:4px; }
+  #files.levels-only ul.read li { display:inline-block; margin:2px 14px 2px 0; }
+  #files.levels-only ul.read .why { display:none; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>{{ snap.pack_title or snap.folder.rsplit('/', 1)[-1] }} <span id="statusBadge" class="b b-{{ badge(snap.status) }}">{{ snap.status }}</span></h1>
+<p class="sub mono">{{ snap.folder }}</p>
+{% if (snap.scholarly or {}).ss_skipped %}<div class="alert warn">Semantic Scholar was rate-limiting, so it was skipped for the rest of this run (from {{ snap.scholarly.ss_skipped_after or 'an early file' }}); {{ snap.scholarly.ss_skipped_sources or 'some' }} source(s) were checked against OpenAlex only or not at all. Add <code>SEMANTIC_SCHOLAR_API_KEY</code> for a limit of your own.</div>{% endif %}
+
+{% set agg = cohort.aggregate if cohort else {} %}
+{% set brief = cohort.brief if cohort else none %}
+{% if not live %}
+{{ graded_line(run_id) }}
+{{ class_toolbar(run_id, cohort, sent, filing,
+                 (agg.students ~ ' student(s) · no reteach brief yet — rebuild the class view to write one') if cohort else '',
+                 'pairs files by student, builds the heat map and a next-class brief (one local model call)') }}
+
+{% if cohort %}
+<section id="class" aria-label="Class summary" hidden>
+<h2>Class summary <span class="quiet" style="font-weight:400">· {{ agg.students }} student(s), {{ agg.files }} file(s) · <a href="{{ url_for('next_class_md', run_id=run_id) }}">next-class brief (markdown)</a></span></h2>
+{% for e in cohort.errors %}<div class="alert warn">{{ e }}</div>{% endfor %}
+
+{% if brief %}
+<h3>What to reteach next class</h3>
+{% for t in brief.themes %}
+<div class="card">
+  <strong>{{ t.title }}</strong> <span class="quiet">· {{ t.prevalence }}</span>
+  <p>{{ t.what_to_teach }}</p>
+  <p><em>In class:</em> {{ t.in_class_move }}</p>
+</div>
+{% endfor %}
+{% if brief.strengths %}<p><strong>What went well:</strong></p><ul class="tight">{% for s in brief.strengths %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+<h3>Announcement draft <span class="quiet" style="font-weight:400">(edit, then paste into Brightspace Announcements or a class message)</span></h3>
+<textarea id="announcement" rows="9" style="width:100%; font:inherit; padding:10px; border:1px solid var(--line); border-radius:6px">{{ brief.announcement }}</textarea>
+<div style="margin-top:8px"><button type="button" class="secondary" onclick="navigator.clipboard.writeText(document.getElementById('announcement').value).then(()=>{this.textContent='Copied';setTimeout(()=>this.textContent='Copy announcement',1500)})">Copy announcement</button></div>
+{% if brief.instructor_notes %}<p class="quiet" style="margin-top:12px"><strong>Instructor notes:</strong> {{ brief.instructor_notes }}</p>{% endif %}
+{% endif %}
+
+{% if paired %}
+<h3>By student <span class="quiet" style="font-weight:400">(union across a student's files)</span></h3>
+<table>
+  <thead><tr><th>Student</th><th>Files</th><th class="num">Cites</th><th class="num">Problems</th><th class="num">History alerts</th><th class="num">Answer key</th></tr></thead>
+  <tbody>
+  {% for s in students %}
+    {% set fl = s.flags %}
+    <tr>
+      <td><a href="{{ url_for('student_page', run_id=run_id, label=s.label) }}">{{ s.label }}</a> <span class="quiet">({{ s.method }})</span></td>
+      <td>{% for f in s.files %}<div>{% if f.status == 'ok' %}<a href="{{ url_for('file_page', run_id=run_id, stem=f.stem) }}">{{ f.name }}</a>{% else %}{{ f.name }} <span class="b b-{{ badge(f.status) }}">{{ f.status }}</span>{% endif %}</div>{% endfor %}</td>
+      <td class="num">{{ fl.citations }}</td>
+      <td class="num">{% if fl.problems %}<span class="b b-bad">{{ fl.problems }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{% if fl.history_alerts %}<span class="b b-bad">{{ fl.history_alerts }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{% if fl.key_total %}<span class="b b-{{ 'ok' if fl.key_detected >= fl.key_total - 1 else 'warn' if fl.key_detected * 2 >= fl.key_total else 'bad' }}">{{ fl.key_detected }}/{{ fl.key_total }}</span>{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if agg.heat %}
+<h3>Planted errors × students <span class="quiet" style="font-weight:400">(sorted by miss rate)</span></h3>
+{% set heat_labels = [] %}{% for s in students if s.files|selectattr('status', 'equalto', 'ok')|list %}{% set _ = heat_labels.append(s.label) %}{% endfor %}
+<div style="overflow-x:auto">
+<table>
+  <thead><tr><th>#</th><th>Sev</th><th>Planted error</th><th class="num">Missed</th>{% for l in heat_labels %}<th title="{{ l }}">{{ l[:14] }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for h in agg.heat %}
+    <tr>
+      <td><strong>{{ h.id }}</strong></td>
+      <td><span class="b b-{{ 'bad' if h.severity == 'high' else 'warn' if h.severity == 'medium' else 'muted' }}">{{ h.severity }}</span></td>
+      <td>{{ h.category }}<div class="quiet">{{ h.whats_wrong[:160] }}</div></td>
+      <td class="num">{% if h.missed %}<span class="b b-{{ 'bad' if h.miss_rate >= 0.5 else 'warn' }}">{{ h.missed }}/{{ h.students }}</span>{% else %}0/{{ h.students }}{% endif %}</td>
+      {% for l in heat_labels %}{% set v = h.cells.get(l, 'unclear') %}
+        <td><span class="b b-{{ 'ok' if v == 'fixed_and_explained' else 'bad' if v == 'missed' else 'muted' if v == 'unclear' else 'warn' }}" title="{{ v }}">{{ {'fixed_and_explained':'✓✓','fixed_silently':'✓','identified_not_fixed':'!','missed':'✗','unclear':'?'}[v] }}</span></td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="quiet">✓✓ found, explained and fixed · ✓ fixed silently · ! flagged but not fixed · ✗ missed · ? unclear</p>
+{% endif %}
+
+{% if agg.citation_problems %}
+<h3>Citation problems across the class</h3>
+<ul class="tight">
+  {% for c in agg.citation_problems %}
+  <li><strong>{{ c.citation }}</strong> ({{ c.students }} student(s)) — {% if c.kind %}{{ c.kind }}: {% endif %}{{ c.label }}{% if c.case_name and c.case_name != c.citation %} — {{ c.case_name }}{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if agg.shared_unfindable %}
+<h3>The same unfindable source in several papers</h3>
+<ul class="tight">
+  {% for u in agg.shared_unfindable %}<li><strong>{{ u.citation }}</strong> — {{ u.students }} students' papers cite it, and it isn't in Semantic Scholar or OpenAlex. Check it by hand.</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if agg.rubric_levels %}
+<h3>Rubric levels (per file)</h3>
+<ul class="tight">
+  {% for crit, dist in agg.rubric_levels.items() %}
+  <li><strong>{{ crit }}</strong>: {% for k, v in dist.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<details {% if not paired and snap.files|length > 1 %}open{% endif %} style="margin:18px 0 12px">
+  <summary>Group files by student{% if agg.index %} <span class="quiet">— Brightspace index.html found: {{ agg.index.names }} name(s), {{ agg.index.matched_files }} file(s) matched</span>{% elif not paired %} <span class="quiet">— no student names were found in the file names; type the same label on each file that belongs to one student</span>{% endif %}</summary>
+  <form method="post" action="{{ url_for('save_pairing', run_id=run_id) }}" class="card" style="margin-top:10px">
+    <table>
+      <thead><tr><th>File</th><th>Student label</th></tr></thead>
+      <tbody>
+      {% for f in snap.files %}
+        <tr><td>{{ f.name }}</td>
+            <td><input type="text" name="label:{{ f.name }}" value="{{ labels.get(f.name, '') }}" placeholder="e.g. Rivera, Jordan" style="max-width:360px"></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div style="margin-top:10px; display:flex; gap:10px; align-items:center">
+      <button type="submit" class="secondary">Save grouping and rebuild class view</button>
+      <span class="quiet">Labels stay in this run folder (_pairing.json). Clear a label to go back to automatic pairing for that file.</span>
+    </div>
+  </form>
+</details>
+
+<form method="post" action="{{ url_for('rebuild_class_view', run_id=run_id) }}" class="row">
+  <button type="submit" class="secondary" style="font-size:13px; padding:4px 10px">Rebuild class view</button>
+  <span class="quiet">re-pairs files, recounts, and rewrites the brief (one local model call)</span>
+</form>
+</section>
+{% endif %}
+{% endif %}
+
+<div class="card">
+  <dl class="kv">
+    <dt>Pack</dt><dd>{{ snap.pack_title or '— citations only' }}{% if snap.pack_auto %} <span class="quiet">· detected from “{{ snap.pack_auto.title }}” ({{ snap.pack_auto.source }}, score {{ snap.pack_auto.score }})</span>{% endif %}</dd>
+    <dt>Model</dt><dd>{{ snap.model }} (localhost)</dd>
+    <dt>Checks</dt><dd>
+      {% set o = snap.options or {} %}
+      {{ 'citations' if o.get('check_citations') else 'no citation check' }}
+      · {{ 'subsequent history' if o.get('check_history') else 'no history' }}
+      · {{ 'formative review' if o.get('with_review') else 'no review' }}
+      {% if o.get('think') %}· thinking on{% endif %}
+      {% if o.get('identities') %}· {{ o.get('identities') }} student name(s) scrubbed{% endif %}
+    </dd>
+    <dt>Started</dt><dd>{{ snap.started_at|local_when }}</dd>
+    <dt>Output</dt><dd class="mono">{{ snap.outdir }}</dd>
+  </dl>
+  <div class="bar" aria-hidden="true"><div id="bar" style="width:{{ (100 * snap.done / snap.total) if snap.total else 0 }}%"></div></div>
+  <div id="progressLine" aria-live="polite"><span id="doneCount">{{ snap.done }}</span> / {{ snap.total }} files ·
+    <span id="current" class="quiet">{{ snap.current.get('file', '') }} {{ snap.current.get('message', '') }}</span></div>
+  {% if snap.error %}<div class="alert bad" style="margin-top:12px">{{ snap.error }}</div>{% endif %}
+  {% if live and can_stop %}
+    <form method="post" action="{{ url_for('run_stop', run_id=run_id) }}" style="margin-top:12px">
+      <button class="danger" type="submit">Stop after current file</button>
+    </form>
+  {% elif live %}
+    <p class="quiet" style="margin-top:12px">Started from the command line — this page follows its progress from disk; stop it in that terminal.</p>
+  {% endif %}
+</div>
+
+<div class="files-head">
+  <h2>Submissions</h2>
+  <label class="check" id="whyToggle" hidden><input type="checkbox" id="showWhy" checked> Show the model's reason for each rubric level</label>
+</div>
+<table id="files">
+  <thead><tr>
+    <th>Submission</th><th>Status</th>
+    <th class="num">Cites</th><th class="num">Problems</th><th class="num">History alerts</th><th class="num">Unchecked</th>
+    <th class="num">Answer key</th><th class="num">Time</th>
+  </tr></thead>
+</table>
+
+{% if live %}
+<h2>Activity</h2>
+<div class="log" id="log" aria-live="off"></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  const runId = {{ run_id|tojson }};
+  const live = {{ live|tojson }};
+  let snap = {{ snap|tojson }};
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const badge = st => {
+    if (['failed','error'].includes(st)) return 'bad';
+    if (['stopped'].includes(st)) return 'warn';
+    if (['ok','done','skipped'].includes(st)) return 'ok';
+    if (st === 'running') return 'run';
+    return 'muted';
+  };
+  const num = (v, alert) => v == null ? '<td class="num quiet">—</td>'
+      : `<td class="num">${v && alert ? '<span class="b b-bad">' + v + '</span>' : v}</td>`;
+  // The model's rubric read as sentences: "Criterion: LEVEL — first sentence of its reason."
+  const sentence = w => { w = String(w || '').trim(); return w && !/[.!?…]$/.test(w) ? w + '.' : w; };
+  const readRow = rows => !rows.length ? '' : `<tr class="read"><td colspan="8"><ul class="read">${rows.map(r =>
+      `<li>${esc(r.criterion)}: <span class="lvl b-${esc(r.tier || 'muted')}">${esc(r.level || '—')}</span>`
+      + (r.why ? `<span class="why"> — ${esc(sentence(r.why))}</span>` : '') + '</li>').join('')}</ul></td></tr>`;
+  function render(s) {
+    snap = s;
+    document.getElementById('statusBadge').textContent = s.status;
+    document.getElementById('statusBadge').className = 'b b-' + badge(s.status);
+    document.getElementById('bar').style.width = (s.total ? 100 * s.done / s.total : 0) + '%';
+    document.getElementById('doneCount').textContent = s.done;
+    const cur = s.current || {};
+    document.getElementById('current').textContent = ['done','failed','stopped'].includes(s.status)
+        ? (s.finished_at ? 'finished ' + s.finished_at : '')
+        : [cur.file, cur.message].filter(Boolean).join(' — ');
+    const table = document.getElementById('files');
+    table.querySelectorAll('tbody').forEach(b => b.remove());
+    table.insertAdjacentHTML('beforeend', s.files.map(f => {
+      const fl = f.flags || {};
+      const link = f.status === 'ok'
+        ? `<a href="/run/${encodeURIComponent(runId)}/file/${encodeURIComponent(f.stem)}">${esc(f.name)}</a>`
+        : esc(f.name);
+      const read = f.rubric_read || Object.entries(f.levels || {}).map(([c, l]) => ({criterion: c, level: l}));
+      const err = f.error ? `<div class="quiet">${esc(f.error)}</div>` : '';
+      const warn = (f.errors || []).length ? `<div class="b b-warn">${esc(f.errors.join('; '))}</div>` : '';
+      const key = fl.key_total == null ? '<td class="num quiet">—</td>'
+        : fl.key_detected == null ? `<td class="num"><span class="b b-warn">?/${fl.key_total}</span></td>`
+        : `<td class="num"><span class="b b-${fl.key_detected >= fl.key_total - 1 ? 'ok' : fl.key_detected * 2 >= fl.key_total ? 'warn' : 'bad'}">${fl.key_detected}/${fl.key_total}</span></td>`;
+      const graded = f.graded ? ' <span class="b b-ok">graded</span>' : '';
+      return `<tbody><tr><td>${link}${graded}${err}${warn}</td>
+        <td><span class="b b-${badge(f.status)}">${esc(f.status)}</span></td>
+        ${num(fl.citations)}${num(fl.problems, true)}${num(fl.history_alerts, true)}${num(fl.unchecked)}
+        ${key}<td class="num">${f.seconds != null ? f.seconds + 's' : ''}</td></tr>${readRow(read)}</tbody>`;
+    }).join(''));
+    document.getElementById('whyToggle').hidden = !s.files.some(f => (f.rubric_read || []).some(r => r.why));
+    const log = document.getElementById('log');
+    if (log && s.log) {
+      log.innerHTML = s.log.map(l => `<div><span class="quiet">${esc(l.ts)}</span> ${esc(l.file)} <span class="quiet">${esc(l.stage)}</span> ${esc(l.message)}</div>`).join('');
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+  render(snap);
+
+  const showWhy = document.getElementById('showWhy');
+  try { showWhy.checked = localStorage.getItem('localEvalShowWhy') !== '0'; } catch (e) { /* storage off */ }
+  const applyWhy = () => document.getElementById('files').classList.toggle('levels-only', !showWhy.checked);
+  showWhy.addEventListener('change', () => {
+    applyWhy();
+    try { localStorage.setItem('localEvalShowWhy', showWhy.checked ? '1' : '0'); } catch (e) { /* storage off */ }
+  });
+  applyWhy();
+
+  async function poll() {
+    try {
+      const r = await fetch(`/run/${encodeURIComponent(runId)}/status`);
+      const s = await r.json();
+      render(s);
+      if (['done','failed','stopped'].includes(s.status)) { location.reload(); return; }
+    } catch (e) { /* server restarting? keep trying */ }
+    setTimeout(poll, 2000);
+  }
+  if (live) setTimeout(poll, 2000);
+</script>
+{{ class_toggle_script() }}
+{% endblock %}

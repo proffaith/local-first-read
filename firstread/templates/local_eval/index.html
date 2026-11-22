@@ -1,0 +1,164 @@
+{% extends "local_eval/base.html" %}
+{% block title %}New run{% endblock %}
+{% block content %}
+<h1>Evaluate a folder of submissions</h1>
+<p class="sub">Each file is extracted, PII-scrubbed, citation-checked, and (with a pack) given a preliminary rubric read by the local model.</p>
+
+{% if error %}<div class="alert bad" role="alert">{{ error }}</div>{% endif %}
+{% if active %}
+  <div class="alert warn">A run is in progress:
+    <a href="{{ url_for('run_page', run_id=active.run_id) }}">{{ active.run_id }}</a>
+    ({{ active.done }}/{{ active.total }} files). Only one run at a time.</div>
+{% endif %}
+{% if ollama_error %}
+  <div class="alert bad"><strong>Ollama is not reachable.</strong> {{ ollama_error }}
+    <span class="quiet">Start it, then reload this page.</span></div>
+{% endif %}
+
+<form method="post" action="{{ url_for('start') }}" class="card" id="runForm">
+  <div class="grid">
+    <div style="grid-column:1 / -1">
+      <label for="folder">Folder of submissions</label>
+      <div class="row">
+        <input type="text" id="folder" name="folder" list="recentFolders" required
+               placeholder="/Users/you/Downloads/Memo 1 submissions"
+               value="{{ request.form.get('folder', '') }}">
+        <button type="button" class="secondary" id="pickBtn">Choose…</button>
+      </div>
+      <datalist id="recentFolders">
+        {% for r in recent %}<option value="{{ r }}">{% endfor %}
+      </datalist>
+      <div class="help">Every .docx / .pdf / .txt / .md in the folder <strong>and its subfolders</strong> is evaluated (names starting with “_”, “.” or “~$” are skipped). A Brightspace bulk download's <span class="mono">index.html</span> is read to pair files with students. Nothing is uploaded — the path is read locally.</div>
+    </div>
+
+    <div>
+      <label for="pack">Assignment pack (rubric / answer key)</label>
+      <select id="pack" name="pack">
+        <option value="" {% if not form.get('pack') %}selected{% endif %}>— detect from the folder —</option>
+        <option value="none" {% if form.get('pack') == 'none' %}selected{% endif %}>— none: citations only —</option>
+        {# One group per course, assignments A to Z inside it (discover_packs sorts). #}
+        {% for course, group in packs|groupby('course_title') %}
+        <optgroup label="{{ course or 'No course title' }}">
+        {% for p in group %}
+          <option value="{{ p.path }}" {% if form.get('pack') == p.path %}selected{% endif %}>
+            {{ p.title }}{% if p.has_key %} · answer key{% endif %}{% if p.readings %} · readings{% endif %}{% if p.has_moves %} · expected moves{% endif %}{% if not p.has_rubric %} — NO RUBRIC{% endif %}
+          </option>
+        {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <div id="detect" class="help" aria-live="polite">Type or choose a folder: the assignment is read from its name or its Brightspace index.html and matched to a local pack.</div>
+      <div class="help">{{ packs|length }} local pack(s) · <a href="{{ url_for('packs_page') }}">packs &amp; expected-moves checklists</a> · write your own from <span class="mono">packs/example-memo.json</span></div>
+    </div>
+
+    <div>
+      <label for="model">Local model</label>
+      {% if models %}
+        <select id="model" name="model">
+          {% for m in models %}
+            <option value="{{ m }}" {% if (form.get('model') or DEFAULT_MODEL) == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <input type="text" id="model" name="model" value="{{ form.get('model') or DEFAULT_MODEL }}">
+      {% endif %}
+      <div class="help">Ollama at {{ host }}. {{ DEFAULT_MODEL }} is the tested default (~80 s per paper for the rubric read on a 32 GB Apple-silicon Mac, plus ~10–20 s per citation judged).</div>
+    </div>
+
+    <div>
+      <label>Checks</label>
+      <label class="check"><input type="checkbox" name="check_citations" {% if form.get('check_citations', 'on') %}checked{% endif %}>
+        <span><strong>Verify citations</strong> — does each case or statute exist, and does it say what the student says it says? (CourtListener / Cornell LII lookup + local model)</span></label>
+      <label class="check"><input type="checkbox" name="check_history" {% if form.get('check_history', 'on') %}checked{% endif %}>
+        <span><strong>Subsequent appellate history</strong> — has a higher court reversed, vacated, remanded or distinguished it?</span></label>
+      <label class="check"><input type="checkbox" name="check_sources" {% if form.get('check_sources', 'on') %}checked{% endif %}>
+        <span><strong>Check academic sources</strong> — the reference list, footnotes and DOIs: does each journal article, book or preprint exist, and is it cited accurately? (Semantic Scholar / OpenAlex / doi.org: a DOI, or the title and year, only)</span></label>
+      <label class="check"><input type="checkbox" name="support_reads" {% if form.get('support_reads', 'on') %}checked{% endif %}>
+        <span><strong>Read abstracts for support</strong> — the local model reads each found source's abstract against the point it's cited for (at most 10 per paper, ~10–20 s each). Shown, never counted as a problem.</span></label>
+      <label class="check"><input type="checkbox" name="refresh_sources" {% if form.get('refresh_sources') %}checked{% endif %}>
+        <span><strong>Refresh source lookups</strong> — ignore the saved lookups in the results folder and ask again.</span></label>
+      {% set ks = scholarly_key_status() %}
+      <div class="help">{% if ks.ss_key %}Semantic Scholar: API key set (1 request/s).{% else %}Semantic Scholar: <strong>no API key</strong> — the shared public pool is often rate-limited, so expect “not checked” rows (OpenAlex is tried next). A free key comes from semanticscholar.org/product/api; put it in <code>.env</code> as <code>SEMANTIC_SCHOLAR_API_KEY</code>.{% endif %}
+        {% if not ks.openalex_key %} OpenAlex: no API key (a small shared daily budget).{% endif %}</div>
+      <label class="check"><input type="checkbox" name="with_review" {% if form.get('with_review') %}checked{% endif %}>
+        <span><strong>Formative writing review</strong> (stage 1) — slower; adds a second model pass per paper.</span></label>
+      <label class="check"><input type="checkbox" name="think" {% if form.get('think') %}checked{% endif %}>
+        <span><strong>Let the model think first</strong> — gemma4 thinking mode. Much slower (~10× per call) and it can run out of output budget on short judgments; leave off unless comparing.</span></label>
+    </div>
+
+    <div>
+      <label for="max_history_checks">Citing opinions judged per citation</label>
+      <input type="number" id="max_history_checks" name="max_history_checks" min="1" max="10" value="{{ form.get('max_history_checks', 3) }}">
+      <div class="help">Each one is a CourtListener fetch plus a local model call.</div>
+      <label for="num_ctx" style="margin-top:12px">Context window (tokens)</label>
+      <input type="number" id="num_ctx" name="num_ctx" min="4096" step="1024" value="{{ form.get('num_ctx', DEFAULT_NUM_CTX) }}">
+      <label for="roster" style="margin-top:12px">Roster file for name scrubbing (optional)</label>
+      <input type="text" id="roster" name="roster" placeholder="/path/to/roster.txt — one “Name, email” per line" value="{{ form.get('roster', '') }}">
+      <div class="help">Names in Brightspace file-name prefixes and <code>index.html</code> are scrubbed automatically; add a roster for files named any other way.</div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div style="grid-column:1 / -1">
+      <label for="results_root">Results folder</label>
+      <input type="text" id="results_root" name="results_root" value="{{ results_root }}">
+      <div class="help">Each run gets a subfolder here with the reports, the scrubbed text the model saw, and the audit log. Reports quote student text, so keep them where your institution keeps student records (for example a folder in your college's OneDrive or SharePoint). Remembered for next time.</div>
+    </div>
+  </div>
+  <div style="margin-top:18px; display:flex; gap:12px; align-items:center">
+    <button type="submit" {% if active %}disabled{% endif %}>Evaluate folder</button>
+  </div>
+</form>
+
+<div class="card">
+  <h2 style="margin-top:0">What leaves this machine</h2>
+  <ul class="tight">
+    <li><strong>Nothing from the paper itself.</strong> Text is scrubbed by the PII gate and only ever sent to the Ollama model on localhost.</li>
+    <li><strong>Citation identifiers only.</strong> For cases and statutes, the volume, reporter, page, party names and year (e.g. <span class="mono">123 F.3d 456</span>) go to CourtListener and Cornell LII so the authority can be found and its opinion fetched. For academic sources, a DOI or similar identifier, or the source's title and year, go to Semantic Scholar, OpenAlex and doi.org. Author names, the sentence a source is cited for, and the rest of the paper are never sent; personal communications, course materials and web links are never looked up.</li>
+    <li>A local audit line per file is appended to <span class="mono">_emissions.jsonl</span> in the run folder, listing exactly what was sent where.</li>
+  </ul>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const folderEl = document.getElementById('folder');
+  const packEl = document.getElementById('pack');
+  const detectEl = document.getElementById('detect');
+  let userPickedPack = false;
+  packEl.addEventListener('change', () => { userPickedPack = packEl.value !== ''; });
+  async function detect() {
+    const folder = folderEl.value.trim();
+    if (!folder) return;
+    detectEl.textContent = 'Looking at the folder…';
+    try {
+      const r = await fetch('{{ url_for('detect') }}?folder=' + encodeURIComponent(folder));
+      const j = await r.json();
+      if (j.error) { detectEl.textContent = j.error; return; }
+      if (j.match && j.match.confident) {
+        if (!userPickedPack) packEl.value = j.match.path;
+        detectEl.innerHTML = `Detected <strong>${esc(j.title)}</strong> (${esc(j.source)}) → pack “${esc(j.match.title)}”${j.match.has_key ? ' with answer key' : ''} · ${j.files} file(s)`;
+      } else if (j.match) {
+        detectEl.innerHTML = `Detected <strong>${esc(j.title)}</strong> (${esc(j.source)}). Closest local pack: “${esc(j.match.title)}” (score ${j.match.score}) — pick it if that is right. · ${j.files} file(s)`;
+      } else {
+        detectEl.innerHTML = `Detected <strong>${esc(j.title)}</strong> (${esc(j.source)}) — no local pack matches. · ${j.files} file(s)`;
+      }
+    } catch (e) { detectEl.textContent = 'Could not inspect the folder: ' + e; }
+  }
+  folderEl.addEventListener('change', detect);
+  folderEl.addEventListener('blur', detect);
+  if (folderEl.value.trim()) detect();
+
+  const pickBtn = document.getElementById('pickBtn');
+  pickBtn.addEventListener('click', async () => {
+    pickBtn.disabled = true; pickBtn.textContent = 'Choosing…';
+    try {
+      const r = await fetch('{{ url_for('pick_folder') }}', {method: 'POST'});
+      const j = await r.json();
+      if (j.path) { folderEl.value = j.path; detect(); }
+      else if (j.error && j.error !== 'cancelled') alert(j.error);
+    } catch (e) { alert('Picker failed: ' + e); }
+    pickBtn.disabled = false; pickBtn.textContent = 'Choose…';
+  });
+</script>
+{% endblock %}

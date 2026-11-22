@@ -1,0 +1,31 @@
+{% extends "local_eval/base.html" %}
+{% block title %}Expected moves · ia{{ pack.assignment_id }}{% endblock %}
+{% block content %}
+<p class="sub"><a href="{{ url_for('packs_page') }}">← packs</a></p>
+<h1>Expected moves <span class="quiet" style="font-weight:400; font-size:15px">· ia{{ pack.assignment_id }} {{ pack.title }}</span></h1>
+<p class="sub">The analytical moves a competent submission must make — states the rule, applies it to these facts, engages the controlling authority, addresses the counterargument. Scored for <em>presence</em> with evidence, never for matching a model answer. Keep it to the moves without which the analysis fails.</p>
+
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+{% if drafted %}<div class="alert warn">This is a <strong>draft from the local model</strong>. Edit it, then save — nothing is stored until you do.</div>{% endif %}
+{% if doc and doc.updated_at %}<p class="quiet">Saved {{ doc.updated_at }} ({{ doc.drafted_by }}). File: <span class="mono">{{ pack_path.rsplit('/', 1)[0] }}/ia{{ pack.assignment_id }}.moves.json</span></p>{% endif %}
+
+<form method="post" action="{{ url_for('moves_save', assignment_id=pack.assignment_id) }}" class="card">
+  <label for="moves_text">One move per line: <span class="mono">ID | severity | move | looks like: what a strong version reads like</span></label>
+  <textarea id="moves_text" name="moves_text" rows="12" style="width:100%; font:13px ui-monospace, Menlo, monospace; padding:10px; border:1px solid var(--line); border-radius:6px" placeholder="M1 | high | States the elements of negligence before applying them | looks like: duty, breach, causation, damages named and then each applied to the facts
+M2 | high | Applies the invitee duty of care to the twenty-minute delay | looks like: connects notice to breach with the timeline
+M3 | medium | Addresses the strongest counterargument | looks like: comparative negligence raised and answered">{{ text }}</textarea>
+  <div class="help">severity: high = the analysis fails without it · medium = materially strengthens it · low = polish. IDs are optional (M1, M2… assigned). Blank = remove the checklist.</div>
+  <div style="margin-top:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+    <button type="submit" name="action" value="save">Save checklist</button>
+    <span class="quiet">or</span>
+    <button type="submit" name="action" value="draft" class="secondary">Draft with the local model</button>
+    {% if models %}<select name="model">{% for m in models %}<option value="{{ m }}" {% if m == DEFAULT_MODEL %}selected{% endif %}>{{ m }}</option>{% endfor %}</select>{% endif %}
+    <span class="quiet">(reads the assignment design and rubric; ~20–40 s; replaces the text above with a draft you then edit and save)</span>
+  </div>
+</form>
+
+<div class="card">
+  <h2 style="margin-top:0">Assignment design the draft reads from</h2>
+  <pre style="white-space:pre-wrap; font-size:13px; color:var(--muted)">{{ pack.assignment_ctx }}</pre>
+</div>
+{% endblock %}

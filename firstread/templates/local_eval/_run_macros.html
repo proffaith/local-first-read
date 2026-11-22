@@ -1,0 +1,91 @@
+{# The finished run's top bar: show/hide the class summary, and where the
+   run is filed on Past runs. The summary itself is a
+   <section id="class" hidden> on the page; class_toggle_script() wires it. #}
+{% macro class_toolbar(run_id, cohort, sent, filing, no_brief_note, build_note) %}
+{% set brief = cohort.brief if cohort else none %}
+<div class="toolbar">
+  {% if cohort %}
+  <button type="button" class="secondary" id="classToggle" aria-expanded="false" aria-controls="class">Show class summary</button>
+  <span class="quiet small">
+    {% if brief %}Class-level only: what the class as a whole missed, for planning the next class
+    {% else %}{{ no_brief_note }}{% endif %}
+  </span>
+  {% else %}
+  <form method="post" action="{{ url_for('rebuild_class_view', run_id=run_id) }}" class="row">
+    <button type="submit" class="secondary">Build class view</button>
+    <span class="quiet small">{{ build_note }}</span>
+  </form>
+  {% endif %}
+  {% if filing %}<span class="quiet small" style="margin-left:auto">Filed under <a href="{{ url_for('runs_page', tab='archived' if filing.archived else none) }}">{{ [filing.semester, filing.course, filing.section]|select|join(' · ') or 'nothing yet' }}</a>{% if filing.archived %} (archived){% endif %}</span>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro class_toggle_script() %}
+<script>
+(function () {
+  const btn = document.getElementById('classToggle');
+  const panel = document.getElementById('class');
+  if (!btn || !panel) return;
+  const setOpen = open => {
+    panel.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    btn.textContent = open ? 'Hide class summary' : 'Show class summary';
+  };
+  btn.addEventListener('click', () => setOpen(panel.hidden));
+  // Rebuilding the class view lands on #class.
+  if (location.hash === '#class') setOpen(true);
+})();
+</script>
+{% endmacro %}
+
+{# A report page's graded bar: whether this student's work (these files of
+   one run) is marked graded, and the buttons that change it. #}
+{% macro graded_bar(run_id, stems, label) %}
+{% set g = graded_state(run_id, stems) %}
+<form method="post" action="{{ url_for('queue_mark') }}" class="toolbar" aria-label="Grading status">
+  <input type="hidden" name="run_id" value="{{ run_id }}">
+  {% for st in stems %}<input type="hidden" name="stem" value="{{ st }}">{% endfor %}
+  <input type="hidden" name="label" value="{{ label }}">
+  <input type="hidden" name="back" value="{{ request.path }}">
+  {% if g.graded %}
+  <span class="b b-ok">Graded{% if g.at %} {{ g.at|replace('T', ' ') }}{% endif %}</span>
+  <button type="submit" name="action" value="ungraded" class="secondary focus" style="font-size:13px; padding:4px 10px">Not graded after all</button>
+  <a href="{{ url_for('queue_page') }}">Back to the queue</a>
+  {% else %}
+  <span class="b b-muted">Not graded yet</span>
+  <button type="submit" name="action" value="graded" formaction="{{ url_for('queue_mark', next='queue') }}" class="focus">Graded — next in the queue</button>
+  <button type="submit" name="action" value="graded" class="secondary focus">Graded</button>
+  <button type="submit" name="action" value="later" formaction="{{ url_for('queue_mark', next='queue') }}" class="secondary focus">Later</button>
+  {% endif %}
+</form>
+{% set mine = kept_for(run_id, stems) %}
+<details id="kept" style="margin:0 0 16px"{% if mine %} open{% endif %}>
+  <summary>Keep a good line from this paper{% if mine %} <span class="quiet">· {{ mine|length }} kept</span>{% endif %}</summary>
+  {% for x in mine %}
+  <form method="post" action="{{ url_for('queue_keep') }}" class="row" style="margin:8px 0; align-items:flex-start">
+    <input type="hidden" name="run_id" value="{{ run_id }}"><input type="hidden" name="back" value="{{ request.path }}">
+    <span style="flex:1">“{{ x.text }}”</span>
+    <button type="submit" name="drop" value="{{ x.id }}" class="secondary focus" style="font-size:13px; padding:4px 10px" aria-label="Drop this line">Drop</button>
+  </form>
+  {% endfor %}
+  <form method="post" action="{{ url_for('queue_keep') }}" style="margin-top:8px">
+    <input type="hidden" name="run_id" value="{{ run_id }}">
+    <input type="hidden" name="stem" value="{{ stems[0] }}">
+    <input type="hidden" name="label" value="{{ label }}">
+    <input type="hidden" name="back" value="{{ request.path }}">
+    <label for="keepText">A sentence worth remembering</label>
+    <textarea id="keepText" name="text" rows="2" maxlength="600" required style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px" placeholder="Paste or type the line"></textarea>
+    <div class="row" style="margin-top:6px"><button type="submit" class="secondary focus">Keep it</button>
+      <span class="help" style="margin:0">Kept lines stay in this run's folder.</span></div>
+  </form>
+</details>
+{% endmacro %}
+
+{# A finished run's line: how much of it is graded. #}
+{% macro graded_line(run_id) %}
+{% set c = run_graded_counts(run_id) %}
+{% if c[1] %}
+<p class="small" style="margin:0 0 14px"><span class="b b-{{ 'ok' if c[0] == c[1] else 'muted' }}">{{ c[0] }} of {{ c[1] }} graded</span>
+  {% if c[0] < c[1] %}<a href="{{ url_for('queue_page', set=run_id) }}">Grade the {{ c[1] - c[0] }} left in the queue</a>{% endif %}</p>
+{% endif %}
+{% endmacro %}

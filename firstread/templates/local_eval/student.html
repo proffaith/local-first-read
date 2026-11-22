@@ -1,0 +1,56 @@
+{% extends "local_eval/base.html" %}
+{% block title %}{{ s.label }}{% endblock %}
+{% from "local_eval/_run_macros.html" import graded_bar %}
+{% block content %}
+{% set fl = s.flags %}
+<p class="sub"><a href="{{ url_for('run_page', run_id=run_id) }}">← back to run</a></p>
+<h1>{{ s.label }} <span class="quiet" style="font-weight:400; font-size:15px">· paired by {{ s.method }}</span></h1>
+{{ graded_bar(run_id, s.files|map(attribute='stem')|list, s.label) }}
+<div class="banner"><strong>PRELIMINARY</strong> — union of what this student's {{ s.files|length }} file(s) show. Not a grade.</div>
+
+<div class="card">
+  <div class="row" style="gap:18px; flex-wrap:wrap">
+    <span><strong>{{ fl.citations }}</strong> citation(s) across files</span>
+    <span class="b b-{{ 'bad' if fl.problems else 'ok' }}">{{ fl.problems }} citation problem(s)</span>
+    <span class="b b-{{ 'bad' if fl.history_alerts else 'ok' }}">{{ fl.history_alerts }} subsequent-history alert(s)</span>
+    {% if fl.key_total %}<span class="b b-{{ 'ok' if fl.key_detected >= fl.key_total - 1 else 'warn' if fl.key_detected * 2 >= fl.key_total else 'bad' }}">answer key {{ fl.key_detected }}/{{ fl.key_total }}</span>{% endif %}
+  </div>
+</div>
+
+<h2>Files</h2>
+<ul class="tight">
+  {% for f in s.files %}
+  <li>{% if f.status == 'ok' %}<a href="{{ url_for('file_page', run_id=run_id, stem=f.stem) }}">{{ f.name }}</a>{% else %}{{ f.name }} <span class="b b-{{ badge(f.status) }}">{{ f.status }}</span>{% endif %}
+    {% if s.levels.get(f.stem) %}<span class="quiet"> — {% for c, l in s.levels[f.stem].items() %}{{ c }}: {{ l }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}</li>
+  {% endfor %}
+</ul>
+
+{% if s.planted %}
+<h2>Answer key (union across files)</h2>
+<table>
+  <thead><tr><th>#</th><th>Severity</th><th>Planted error</th><th>Student</th><th>Per file</th><th>Evidence</th></tr></thead>
+  <tbody>
+  {% for r in s.planted %}
+    {% set cls = 'ok' if r.status == 'fixed_and_explained' else 'bad' if r.status == 'missed' else 'muted' if r.status == 'unclear' else 'warn' %}
+    <tr>
+      <td><strong>{{ r.id }}</strong></td>
+      <td><span class="b b-{{ 'bad' if r.severity == 'high' else 'warn' if r.severity == 'medium' else 'muted' }}">{{ r.severity }}</span></td>
+      <td>{{ r.category }}{% if key.get(r.id) %}<div class="quiet">{{ key[r.id].whats_wrong[:200] }}</div>{% endif %}</td>
+      <td><span class="b b-{{ cls }}">{{ DETECTION_STATUS_LABELS.get(r.status, r.status) }}</span></td>
+      <td class="quiet">{% for stem, st in r.per_file.items() %}<div>{{ stem[:28] }}: {{ st }}</div>{% endfor %}</td>
+      <td>{% if r.evidence %}“{{ r.evidence }}”{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if s.citation_problems %}
+<h2>Citation problems</h2>
+<ul class="tight">
+  {% for c in s.citation_problems %}
+  <li><strong>{{ c.citation }}</strong> — {{ SOURCE_LABELS.get(c.status, c.status) }}{% if c.case_name %} — {{ c.case_name }}{% endif %}{% if c.note %}<div class="quiet">{{ c.note }}</div>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

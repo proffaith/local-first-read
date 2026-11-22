@@ -1,0 +1,179 @@
+{% extends "local_eval/base.html" %}
+{% block title %}Past runs{% endblock %}
+{% block head %}
+<style>
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:0 0 16px; }
+  .tabs a { padding:8px 14px; text-decoration:none; color:var(--muted); border-bottom:3px solid transparent; margin-bottom:-1px; }
+  .tabs a[aria-current=page] { color:var(--ink); border-bottom-color:var(--accent); font-weight:600; }
+  .actionbar { position:sticky; top:0; z-index:5; padding:12px 16px; box-shadow:0 2px 6px rgba(0,0,0,.04); }
+  .actionbar .row { flex-wrap:wrap; gap:8px; }
+  .actionbar input[type=search] { margin-left:auto; width:260px; max-width:100%; padding:7px 10px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  .actionbar details { margin-top:10px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .grid3 { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px 16px; margin:10px 0; }
+  @media (max-width:760px) { .grid3 { grid-template-columns:1fr; } .actionbar input[type=search] { margin-left:0; width:100%; } }
+  details.sem { margin:22px 0 0; }
+  details.sem > summary { color:var(--ink); }
+  details.sem > summary h2 { display:inline; margin:0; }
+  h3.cls { display:flex; gap:10px; align-items:center; margin:16px 0 6px; }
+  h3.cls label { display:flex; gap:8px; align-items:center; font-size:15px; margin:0; }
+  /* fixed layout so every group's table lines up with the others */
+  table.runs { margin-bottom:6px; table-layout:fixed; }
+  table.runs col.c-tick { width:40px; } table.runs col.c-kind { width:9%; }
+  table.runs col.c-status { width:22%; } table.runs col.c-files { width:7%; }
+  table.runs col.c-started { width:17%; }
+  table.runs td { overflow-wrap:anywhere; }
+  .badges .b { margin:0 4px 4px 0; }
+  tr.ticked td { background:var(--run-bg); }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Past runs</h1>
+<p class="sub mono">{{ results_root }}</p>
+{% if note %}<div class="alert ok" role="status">{{ note }}</div>{% endif %}
+
+<nav class="tabs" aria-label="Which runs">
+  <a href="{{ url_for('runs_page') }}"{% if not archived %} aria-current="page"{% endif %}>Active ({{ n_active }})</a>
+  <a href="{{ url_for('runs_page', tab='archived') }}"{% if archived %} aria-current="page"{% endif %}>Archived ({{ n_archived }})</a>
+</nav>
+
+{% if groups %}
+<form method="post" action="{{ url_for('runs_organize') }}" id="organize">
+  <input type="hidden" name="tab" value="{{ 'archived' if archived else '' }}">
+  <div class="card actionbar">
+    <div class="row">
+      <strong id="selCount" aria-live="polite">No runs ticked</strong>
+      {% if archived %}
+      <button type="submit" name="action" value="unarchive" class="secondary needs-pick">Restore to the list</button>
+      {% else %}
+      <button type="submit" name="action" value="archive" class="secondary needs-pick">Archive</button>
+      {% endif %}
+      <button type="submit" name="action" value="delete" class="danger needs-pick">Delete…</button>
+      {% if n_cleanup %}<button type="button" class="secondary" id="pickCleanup" title="Failed or interrupted runs, and older runs of a folder you ran again — never one you sent to course design or recorded decisions on">Tick failed &amp; older duplicates ({{ n_cleanup }})</button>{% endif %}
+      <input type="search" id="filter" placeholder="Filter by assignment, folder, class…" aria-label="Filter runs">
+    </div>
+    <details>
+      <summary>File ticked runs under a semester, class or section</summary>
+      <div class="grid3">
+        {% for f, label, eg in [('semester', 'Semester', 'Fall 2026'), ('course', 'Class', 'BUSL 101'), ('section', 'Section', 'W03')] %}
+        <div><label for="f-{{ f }}">{{ label }}</label>
+          <input type="text" id="f-{{ f }}" name="{{ f }}" list="dl-{{ f }}" placeholder="e.g. {{ eg }}">
+          <datalist id="dl-{{ f }}">{% for v in known_values[f] %}<option value="{{ v }}">{% endfor %}</datalist></div>
+        {% endfor %}
+      </div>
+      <div class="row">
+        <button type="submit" name="action" value="file" class="secondary needs-pick">File ticked runs</button>
+        <button type="submit" name="action" value="reset" class="secondary needs-pick">Go back to the detected filing</button>
+      </div>
+      <p class="help">A blank field stays as it is. Runs file themselves from the pack's course, and the folders the submissions sat in (“W03 Fall 2026”); a semester read from the run's date alone is marked as a guess.</p>
+    </details>
+  </div>
+
+  {% for g in groups %}
+  <details class="sem" open>
+    <summary><h2>{{ g.semester }}</h2> <span class="quiet">· {{ g.count }} run{{ '' if g.count == 1 else 's' }}</span></summary>
+    {% for c in g.classes %}
+    {% set gid = 'g' ~ loop.index ~ '-' ~ g.semester|replace(' ', '') %}
+    <div class="cls-block">
+      <h3 class="cls"><label><input type="checkbox" class="pick-group" data-group="{{ gid }}" aria-label="Tick every run in {{ c.course }}{% if c.section %} {{ c.section }}{% endif %}, {{ g.semester }}">{{ c.course }}{% if c.section %} · {{ c.section }}{% else %} <span class="quiet" style="font-weight:400">· no section</span>{% endif %}</label>
+        <span class="quiet small" style="font-weight:400">{{ c.runs|length }} run{{ '' if c.runs|length == 1 else 's' }}</span></h3>
+      <table class="runs">
+        <colgroup><col class="c-tick"><col><col class="c-kind"><col class="c-status"><col class="c-files"><col class="c-started"></colgroup>
+        <thead><tr><th><span class="quiet small">Tick</span></th><th>Assignment</th><th>Kind</th><th>Status</th><th class="num">Files</th><th>Started</th></tr></thead>
+        <tbody>
+        {% for r in c.runs %}
+          {% set files = r.files or [] %}
+          {% set fl = r.filing %}
+          {% set title = r.assignment_title or r.pack_title or (r.folder or r.run_id).rstrip('/').rsplit('/', 1)[-1] %}
+          <tr data-group="{{ gid }}" data-cleanup="{{ 1 if r.cleanup else 0 }}" data-sent="{{ 1 if r.sent else 0 }}"
+              data-text="{{ [title, r.folder or '', fl.course, fl.section, fl.semester, r.run_id]|join(' ')|lower }}">
+            <td><input type="checkbox" name="run_id" value="{{ r.run_id }}" aria-label="Tick {{ title }}, started {{ r.started_at|local_when }}"></td>
+            <td><a href="{{ url_for('run_page', run_id=r.run_id) }}">{{ title }}</a>
+              <div class="quiet small" title="{% for f in ['semester', 'course', 'section'] if fl.sources.get(f) %}{{ f|replace('course', 'class')|capitalize }}: {{ sources[fl.sources[f]] }}. {% endfor %}">
+                {{ (r.folder or '').rstrip('/').rsplit('/', 1)[-1] }}{% if r.model %} · {{ r.model }}{% endif %}
+                {% if fl.sources.get('semester') == 'date' %}· <em>semester guessed from the run's date</em>{% endif %}
+                {% if fl.archived and fl.archived_at %}· archived {{ fl.archived_at|replace('T', ' ') }}{% endif %}
+              </div></td>
+            <td>{{ 'discussion' if r.mode == 'discussion' else 'interview notes' if r.mode == 'interview' else 'exit ticket' if r.mode == 'ticket' else 'papers' }}</td>
+            <td class="badges">
+              {% if r.interrupted %}<span class="b b-warn" title="Its manifest still says running but has not been written for a while — the server or terminal stopped mid-run">interrupted</span>
+              {% else %}<span class="b b-{{ badge(r.status) }}">{{ r.status }}</span>{% endif %}
+              {% if r.superseded_by %}<span class="b b-muted" title="A newer run of the same folder and pack evaluated at least as many files: {{ r.superseded_by }}">older duplicate</span>{% endif %}
+              {% if r.gradable_n and not r.live %}<span class="b b-{{ 'ok' if r.graded_n == r.gradable_n else 'muted' }}" title="Students (or sheets, or topics) you have marked graded">{{ r.graded_n }}/{{ r.gradable_n }} graded</span>{% endif %}
+              {% if r.decisions %}<span class="b b-run" title="You recorded rubric decisions on this run (calibration)">your decisions</span>{% endif %}
+            </td>
+            <td class="num">{{ r.ok_files }}/{{ files|length }}</td>
+            <td class="started">{{ r.started_at|local_when }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </details>
+  {% endfor %}
+</form>
+{% elif archived %}
+<p class="quiet">No archived runs. Archive a run from the <a href="{{ url_for('runs_page') }}">Active</a> list to tuck it away here.</p>
+{% else %}
+<p class="quiet">No runs yet. <a href="{{ url_for('index') }}">Start one.</a></p>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('organize');
+  if (!form) return;
+  const boxes = () => [...form.querySelectorAll('input[name=run_id]')];
+  const ticked = () => boxes().filter(b => b.checked);
+  function sync() {
+    const n = ticked().length;
+    document.getElementById('selCount').textContent = n ? `${n} run${n === 1 ? '' : 's'} ticked` : 'No runs ticked';
+    form.querySelectorAll('.needs-pick').forEach(b => { b.disabled = !n; });
+    boxes().forEach(b => b.closest('tr').classList.toggle('ticked', b.checked));
+    form.querySelectorAll('.pick-group').forEach(g => {
+      const mine = boxes().filter(b => b.closest('tr').dataset.group === g.dataset.group);
+      const on = mine.filter(b => b.checked).length;
+      g.checked = on > 0 && on === mine.length;
+      g.indeterminate = on > 0 && on < mine.length;
+    });
+  }
+  form.addEventListener('change', e => {
+    if (e.target.classList.contains('pick-group')) {
+      boxes().filter(b => b.closest('tr').dataset.group === e.target.dataset.group
+                         && !b.closest('tr').hidden)
+             .forEach(b => { b.checked = e.target.checked; });
+    }
+    sync();
+  });
+  const cleanup = document.getElementById('pickCleanup');
+  if (cleanup) cleanup.addEventListener('click', () => {
+    boxes().forEach(b => { b.checked = b.closest('tr').dataset.cleanup === '1'; });
+    sync();
+  });
+  // Enter in a text field would submit with the form's first button
+  // (Archive): the filing fields file instead, the filter does nothing.
+  form.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.target.type === 'checkbox') return;
+    e.preventDefault();
+    const file = form.querySelector('button[value=file]');
+    if (e.target.closest('.grid3') && !file.disabled) file.click();
+  });
+  form.addEventListener('submit', e => {
+    if (!e.submitter || e.submitter.value !== 'delete') return;
+    const picked = ticked();
+    const msg = `Delete ${picked.length} run${picked.length === 1 ? '' : 's'}? `
+      + 'Each run folder and every report in it is removed for good.'
+      + '\n\nTo hide runs without deleting them, use Archive.';
+    if (!confirm(msg)) e.preventDefault();
+  });
+  document.getElementById('filter').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    form.querySelectorAll('tr[data-text]').forEach(tr => { tr.hidden = !!q && !tr.dataset.text.includes(q); });
+    form.querySelectorAll('.cls-block').forEach(b => { b.hidden = !b.querySelector('tr[data-text]:not([hidden])'); });
+    form.querySelectorAll('details.sem').forEach(d => { d.hidden = !d.querySelector('.cls-block:not([hidden])'); });
+  });
+  sync();
+})();
+</script>
+{% endblock %}

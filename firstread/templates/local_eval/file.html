@@ -1,0 +1,300 @@
+{% extends "local_eval/base.html" %}
+{% block title %}{{ res.file }}{% endblock %}
+{% from "local_eval/_run_macros.html" import graded_bar %}
+{% block content %}
+{% set fl = res.flags or {} %}
+{% set src = res.source or {} %}
+{% set result = res.result or {} %}
+<p class="sub"><a href="{{ url_for('run_page', run_id=run_id) }}">← back to run</a> · <a href="{{ url_for('file_md', run_id=run_id, stem=stem) }}">markdown</a></p>
+<h1>{{ res.file }}</h1>
+{% if res.assignment_title %}<p class="sub">Assignment: {{ res.assignment_title }}</p>{% endif %}
+{{ graded_bar(run_id, [stem], res.file) }}
+
+<div class="banner"><strong>PRELIMINARY</strong> — local model triage draft ({{ res.model }} on localhost). Not a grade.</div>
+
+{% for e in res.errors or [] %}<div class="alert bad">{{ e }}</div>{% endfor %}
+
+{% if src.checked %}
+<div class="card">
+  <div class="row" style="gap:18px; flex-wrap:wrap">
+    <span><strong>{{ fl.citations }}</strong> citation(s)</span>
+    <span class="b b-{{ 'bad' if fl.problems else 'ok' }}">{{ fl.problems }} problem(s)</span>
+    <span class="b b-{{ 'bad' if fl.history_alerts else 'ok' }}">{{ fl.history_alerts }} subsequent-history alert(s)</span>
+    <span class="b b-{{ 'warn' if fl.unchecked else 'muted' }}">{{ fl.unchecked }} unchecked</span>
+    {% if fl.unverifiable %}<span class="b b-muted" title="Statutes, Westlaw / Lexis numbers or secondary sources the checker doesn't index — check by hand; not counted as problems">{{ fl.unverifiable }} couldn't verify</span>{% endif %}
+    {% if src.capped %}<span class="b b-warn">only the first {{ src.findings|length }} of {{ src.count }} checked</span>{% endif %}
+    {% if src.judge_failures %}<span class="b b-warn">{{ src.judge_failures }} local model failure(s) during judging</span>{% endif %}
+    {% if fl.sources %}
+    <span><strong>{{ fl.sources }}</strong> academic source(s)</span>
+    {% if fl.possibly_fabricated %}<span class="b b-bad" title="Not found anywhere with a warning sign, or a real work cited with the wrong authors or DOI — check by hand">{{ fl.possibly_fabricated }} possibly fabricated</span>{% endif %}
+    {% if fl.reference_errors %}<span class="b b-warn" title="The source exists, but the reference gets a detail wrong — not counted as a problem">{{ fl.reference_errors }} reference error(s)</span>{% endif %}
+    {% if src.sources_capped %}<span class="b b-warn">only the first {{ fl.sources }} sources checked</span>{% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% set legal = src.findings|rejectattr('type', 'equalto', 'academic')|list %}
+{% set academic = src.findings|selectattr('type', 'equalto', 'academic')|list %}
+{% if (src.scholarly or {}).ss_skipped %}<div class="alert warn">Semantic Scholar was rate-limiting, so it was skipped for the rest of this run (from {{ src.scholarly.ss_skipped_after or 'an earlier file' }}); sources were checked against OpenAlex only. Add <code>SEMANTIC_SCHOLAR_API_KEY</code> for a limit of your own.</div>{% endif %}
+
+<h2>Cases and statutes</h2>
+{% if legal %}
+<table>
+  <thead><tr><th>Citation</th><th>Exists / supports?</th><th>Authority</th><th>Subsequent history</th></tr></thead>
+  <tbody>
+  {% for f in legal %}
+    {% set h = f.history or {} %}
+    <tr>
+      <td><strong>{{ f.citation }}</strong>
+        {% if f.proposition %}<div class="prop">“{{ f.proposition }}”</div>{% endif %}
+      </td>
+      {% set st = finding_status(f) %}
+      <td><span class="b b-{{ badge(st) }}">{{ st }}</span>
+        <div>{{ SOURCE_LABELS.get(st, st) }}</div>
+        {% if f.note %}<div class="quiet">{{ f.note }}</div>{% endif %}
+      </td>
+      <td>
+        {% if f.url %}<a href="{{ f.url }}" target="_blank" rel="noopener">{{ f.case_name or 'view' }}</a>{% else %}{{ f.case_name }}{% endif %}
+        {% if f.court or f.date_filed %}<div class="quiet">{{ f.court }} {{ f.date_filed[:4] if f.date_filed else '' }}</div>{% endif %}
+      </td>
+      <td>
+        {% if h %}
+          <span class="b b-{{ badge(h.status) }}">{{ h.status }}</span>
+          <div>{{ HISTORY_LABELS.get(h.status, h.status) }}</div>
+          {% if h.summary and h.status not in ('none_found', 'skipped', 'not_run') %}<div class="quiet">{{ h.summary }}</div>{% endif %}
+          {% if h.citing_cases %}
+            <details><summary>{{ h.citing_cases|length }} citing opinion(s)</summary>
+              <ul class="tight">
+              {% for c in h.citing_cases %}
+                <li><strong>{{ c.disposition|title }}</strong> —
+                  {% if c.courtlistener_url %}<a href="{{ c.courtlistener_url }}" target="_blank" rel="noopener">{{ c.citing_case_name }}</a>{% else %}{{ c.citing_case_name }}{% endif %}
+                  <span class="quiet">({{ c.citing_court }} {{ c.citing_date_filed[:4] if c.citing_date_filed else '' }})</span>
+                  {% if c.disposition_note %}<div class="quiet">{{ c.disposition_note }}</div>{% endif %}
+                </li>
+              {% endfor %}
+              </ul>
+            </details>
+          {% endif %}
+        {% elif f.type == 'statute' %}<span class="quiet">n/a (statute)</span>
+        {% else %}<span class="quiet">—</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="quiet">No legal citations detected.</p>
+{% endif %}
+
+{% if academic %}
+<h2>Academic sources</h2>
+<table>
+  <thead><tr><th>Reference</th><th>Verdict</th><th>Indexed record</th><th>What differs / why</th></tr></thead>
+  <tbody>
+  {% for f in academic %}
+    {% set st = finding_status(f) %}
+    <tr>
+      <td>{{ f.citation }}
+        <div class="quiet">{{ SOURCE_KIND_LABELS.get(f.source_kind, f.source_kind) }}{% if f.in_text %} · cited as {{ f.in_text[:2]|join(', ') }}{% endif %}</div>
+        {% if f.proposition %}<div class="prop">“{{ f.proposition }}”</div>{% endif %}
+      </td>
+      <td><span class="b b-{{ badge(st) }}">{{ st }}</span>
+        <div>{{ finding_label(f) }}</div>
+        {% for sig in f.fabrication_signals or [] %}<div class="quiet">⚑ {{ sig|replace('_', ' ') }}</div>{% endfor %}
+      </td>
+      <td>
+        {% if f.case_name %}{% if f.url %}<a href="{{ f.url }}" target="_blank" rel="noopener">{{ f.case_name }}</a>{% else %}{{ f.case_name }}{% endif %}{% elif f.url %}<a href="{{ f.url }}" target="_blank" rel="noopener noreferrer">open the link</a>{% endif %}
+        {% if indexed_line(f) %}<div class="quiet">{{ indexed_line(f) }}</div>{% endif %}
+      </td>
+      <td>
+        {% if f.differences %}<ul class="tight">{% for d in f.differences %}<li>{% if d.severity == 'major' %}<strong>{{ d.field }}</strong>{% else %}{{ d.field }}{% endif %}: cited {{ d.cited }}; indexed {{ d.indexed }}</li>{% endfor %}</ul>
+        {% elif f.note %}<div>{{ f.note }}</div>{% endif %}
+        {% if f.support %}<div class="quiet">Abstract read: <span class="b b-{{ 'warn' if f.support.status in ('found_unrelated', 'found_miscited') else badge(f.support.status) }}">{{ f.support.status }}</span> {{ f.support.note }}</div>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% set form_checks = src.citation_form or {} %}
+{% if form_checks.in_text_missing or form_checks.uncited_entry %}
+<h3>Citation form</h3>
+<ul class="tight">
+  {% for c in form_checks.in_text_missing %}<li>Cited in the text but missing from the references: {{ c }}</li>{% endfor %}
+  {% for t in form_checks.uncited_entry %}<li>In the references but never cited in the text: {{ t }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+{% elif src.error %}
+<div class="alert bad">{{ src.error }}</div>
+{% endif %}
+
+{% set planted = res.planted %}
+{% if planted %}
+{% set tc = res.tracked_changes or {} %}
+<h2>Answer key: {{ planted.detected }} of {{ planted.total }} planted errors detected
+  <span class="quiet" style="font-weight:400">({{ planted.high_detected }}/{{ planted.high_total }} high-severity)</span></h2>
+{% if tc.insertions or tc.deletions %}
+<p class="quiet">Track Changes seen: {{ tc.insertions }} inserted run(s), {{ tc.deletions }} deleted run(s). The model judged the redline view (<a href="{{ url_for('file_txt', run_id=run_id, stem=stem, kind='redline') }}">view</a>).</p>
+{% endif %}
+<table>
+  <thead><tr><th>#</th><th>Severity</th><th>Planted error</th><th>Student</th><th>Evidence / note</th></tr></thead>
+  <tbody>
+  {% for r in planted.errors %}
+    {% set cls = 'ok' if r.status == 'fixed_and_explained' else 'bad' if r.status == 'missed' else 'muted' if r.status == 'unclear' else 'warn' %}
+    <tr>
+      <td><strong>{{ r.id }}</strong></td>
+      <td><span class="b b-{{ 'bad' if r.severity == 'high' else 'warn' if r.severity == 'medium' else 'muted' }}">{{ r.severity }}</span></td>
+      <td>{{ r.category }}{% if r.locator %}<div class="prop">{{ r.locator }}</div>{% endif %}</td>
+      <td><span class="b b-{{ cls }}">{{ DETECTION_STATUS_LABELS.get(r.status, r.status) }}</span></td>
+      <td>{% if r.evidence %}<div>“{{ r.evidence }}”</div>{% endif %}{% if r.note %}<div class="quiet">{{ r.note }}</div>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if planted.additional_issues %}
+<h3>Issues the student raised beyond the key</h3>
+<ul class="tight">
+  {% for a in planted.additional_issues %}
+  <li><span class="b b-{{ 'ok' if a.assessment == 'genuine_issue' else 'bad' if a.assessment == 'not_an_error' else 'muted' }}">{{ a.assessment }}</span> {{ a.description }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if planted.summary %}<div class="card">{{ planted.summary }}</div>{% endif %}
+{% elif res.flags and res.flags.key_total %}
+<div class="alert warn">This assignment has an answer key of {{ res.flags.key_total }} planted errors, but the check did not complete for this file.</div>
+{% endif %}
+
+{% set moves = res.moves %}
+{% if moves %}
+<h2>Expected moves: {{ moves.present }} of {{ moves.total }} present
+  <span class="quiet" style="font-weight:400">({{ moves.strong }} strong; {{ moves.high_present }}/{{ moves.high_total }} high-severity)</span></h2>
+<table>
+  <thead><tr><th>#</th><th>Severity</th><th>Move</th><th>Status</th><th>Evidence / note</th></tr></thead>
+  <tbody>
+  {% for r in moves.moves %}
+    {% set cls = 'ok' if r.status == 'present_strong' else 'bad' if r.status == 'missing' else 'muted' if r.status == 'not_applicable' else 'warn' %}
+    <tr>
+      <td><strong>{{ r.id }}</strong></td>
+      <td><span class="b b-{{ 'bad' if r.severity == 'high' else 'warn' if r.severity == 'medium' else 'muted' }}">{{ r.severity }}</span></td>
+      <td>{{ r.move }}</td>
+      <td><span class="b b-{{ cls }}">{{ MOVE_STATUS_LABELS.get(r.status, r.status) }}</span></td>
+      <td>{% if r.evidence %}<div>“{{ r.evidence }}”</div>{% endif %}{% if r.note %}<div class="quiet">{{ r.note }}</div>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if moves.summary %}<div class="card">{{ moves.summary }}</div>{% endif %}
+{% elif res.flags and res.flags.moves_total %}
+<div class="alert warn">This pack has an expected-moves checklist of {{ res.flags.moves_total }}, but the check did not complete for this file.</div>
+{% endif %}
+
+{% if result %}
+<h2>Content assessment</h2>
+<div class="card">{{ result.content_assessment }}</div>
+
+{% if result.rubric %}
+<h2>Rubric suggestions <span class="quiet" style="font-weight:400">(verify before adopting)</span></h2>
+<table>
+  <thead><tr><th>Criterion</th><th>Suggested</th><th>Why</th><th>Verify</th></tr></thead>
+  <tbody>
+  {% for r in result.rubric %}
+    <tr><td>{{ r.criterion }}</td><td><strong>{{ r.suggested_level }}</strong></td><td>{{ r.rationale }}</td><td class="quiet">{{ r.instructor_check }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if result.focus_for_instructor %}
+<h2>Where your judgment is most needed</h2>
+<ul>{% for f in result.focus_for_instructor %}<li>{{ f }}</li>{% endfor %}</ul>
+{% endif %}
+{% if result.integrity_note %}
+<h2>Integrity note</h2>
+<div class="card">{{ result.integrity_note }}</div>
+{% endif %}
+{% endif %}
+
+{% if pack and (result.rubric or planted) %}
+<h2 id="decisions">Your decisions <span class="quiet" style="font-weight:400">(confirm or override — recorded for this file and as calibration for this course)</span></h2>
+{% if overrides %}<p class="quiet">Last saved {{ overrides.saved_at }}.</p>{% endif %}
+<form method="post" action="{{ url_for('save_overrides', run_id=run_id, stem=stem) }}" class="card">
+  {% if result.rubric %}
+  <table>
+    <thead><tr><th>Criterion</th><th>Model suggested</th><th>Your level</th><th>Why (optional — becomes a calibration exemplar)</th><th>Agreement so far</th></tr></thead>
+    <tbody>
+    {% for r in result.rubric %}
+      {% set ov = (overrides.rubric.get(r.criterion) if overrides else none) %}
+      {% set st = stats.get('rubric:' ~ r.criterion) %}
+      <tr>
+        <td>{{ r.criterion }}</td>
+        <td><strong>{{ r.suggested_level }}</strong></td>
+        <td>
+          <select name="level:{{ r.criterion }}">
+            <option value="">— no decision —</option>
+            {% for ln in level_names %}<option value="{{ ln }}" {% if ov and ov.instructor == ln %}selected{% elif not ov and ln == r.suggested_level %}{% endif %}>{{ ln }}{% if ln == r.suggested_level %} (model){% endif %}</option>{% endfor %}
+          </select>
+        </td>
+        <td><input type="text" name="reason:{{ r.criterion }}" value="{{ ov.reason if ov else '' }}" placeholder="e.g. cites the right rule but never applies it"></td>
+        <td class="quiet">{% if st %}{{ st.exact }}/{{ st.n }} exact{% if st.n >= 3 %} · {{ st.tendency }}{% endif %}{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if planted %}
+  <h3>Planted errors</h3>
+  <table>
+    <thead><tr><th>#</th><th>Model said</th><th>Your call</th><th>Why (optional)</th></tr></thead>
+    <tbody>
+    {% for r in planted.errors %}
+      {% set ov = (overrides.planted.get(r.id) if overrides else none) %}
+      <tr>
+        <td><strong>{{ r.id }}</strong> <span class="quiet">{{ r.category[:50] }}</span></td>
+        <td>{{ DETECTION_STATUS_LABELS.get(r.status, r.status) }}</td>
+        <td><select name="pstatus:{{ r.id }}">
+          <option value="">— no decision —</option>
+          {% for s in DETECTION_STATUSES %}<option value="{{ s }}" {% if ov and ov.instructor == s %}selected{% endif %}>{{ DETECTION_STATUS_LABELS.get(s, s) }}</option>{% endfor %}
+        </select></td>
+        <td><input type="text" name="preason:{{ r.id }}" value="{{ ov.reason if ov else '' }}"></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div style="margin-top:12px; display:flex; gap:12px; align-items:center">
+    <button type="submit">Save decisions</button>
+    <span class="quiet">Only criterion, the model's level, your level and your reason are stored — never student text. <a href="{{ url_for('calibration_page') }}">See agreement statistics.</a></span>
+  </div>
+</form>
+{% endif %}
+
+{% if res.review %}
+<h2>Formative review (stage 1)</h2>
+<div class="card">
+  <p>{{ res.review.summary }}</p>
+  {% if res.review.top_priorities %}<p><strong>Fix these first:</strong></p><ul>{% for p in res.review.top_priorities %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+  {% for d in res.review.dimensions or [] %}
+    <p><strong>{{ d.name }}</strong> <span class="b b-{{ 'ok' if d.status == 'strong' else 'warn' if d.status == 'needs_work' else 'muted' }}">{{ d.status }}</span> — {{ d.comment }}</p>
+    {% if d.suggestions %}<ul class="tight">{% for s in d.suggestions %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Privacy &amp; timing</h2>
+<dl class="kv">
+  {% set red = {} %}{% for k, v in (res.redactions or {}).items() if v %}{% set _ = red.update({k: v}) %}{% endfor %}
+  <dt>PII scrubbed before any model call</dt><dd>{{ red if red else 'nothing found to redact' }}</dd>
+  <dt>Sent to research services</dt><dd>
+    {% set em = src.emissions or {} %}
+    {% set names = {'courtlistener': 'CourtListener', 'cornell_lii': 'Cornell LII', 'semantic_scholar': 'Semantic Scholar', 'openalex': 'OpenAlex', 'doi_org': 'doi.org'} %}
+    {% set sent = em.items()|selectattr(1)|list %}
+    {% if sent %}
+      {% for k, v in sent %}{% if not loop.first %}<br>{% endif %}{{ names.get(k, k) }}: {{ v|join(', ') }}{% endfor %}
+    {% else %}nothing{% endif %}
+    {% if src.cache_hits %}<div class="quiet">{{ src.cache_hits }} lookup(s) answered from the saved lookups — nothing sent for those.</div>{% endif %}
+  </dd>
+  <dt>Characters extracted</dt><dd>{{ res.chars_in }} · <a href="{{ url_for('file_txt', run_id=run_id, stem=stem, kind='text') }}">what the model saw</a>{% if (res.tracked_changes or {}).insertions or (res.tracked_changes or {}).deletions %} · <a href="{{ url_for('file_txt', run_id=run_id, stem=stem, kind='redline') }}">redline view</a>{% endif %}</dd>
+  <dt>Timing</dt><dd>{% for k, v in (res.timings or {}).items() %}{{ k }} {{ v }} {% endfor %}</dd>
+  <dt>Evaluated</dt><dd>{{ res.evaluated_at }}</dd>
+</dl>
+{% endblock %}

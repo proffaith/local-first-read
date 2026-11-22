@@ -1,0 +1,14 @@
+# secrets
+.env
+# student work and everything derived from it never belongs in git
+results/
+submissions/
+*.docx
+*.pdf
+!examples/*.pdf
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store

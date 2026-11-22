@@ -1,0 +1,176 @@
+{% extends "local_eval/base.html" %}
+{% block title %}Grading queue{% endblock %}
+{% block head %}
+<style>
+  .tally { display:flex; flex-wrap:wrap; gap:8px 28px; align-items:baseline; }
+  .tally .big { font-size:30px; font-weight:700; line-height:1.1; }
+  .item { display:grid; grid-template-columns:1fr max-content; gap:8px 20px; align-items:start; }
+  @media (max-width:760px) { .item { grid-template-columns:1fr; } }
+  .item h3 { margin:0 0 2px; font-size:17px; }
+  .item .acts { display:flex; flex-direction:column; gap:8px; min-width:190px; }
+  .item .acts button, .item .acts .btn { width:100%; text-align:center; }
+  .item .b { margin:0 4px 4px 0; }
+  ul.lv { list-style:none; margin:6px 0 0; padding:0 0 0 12px; border-left:3px solid var(--line); font-size:14px; }
+  form.inline { display:inline; }
+  button.link { background:none; border:none; color:var(--accent); padding:0; text-decoration:underline; cursor:pointer; }
+  table.sets td { vertical-align:middle; }
+  .reward { background:var(--ok-bg); color:var(--ok); border:2px solid var(--ok); border-radius:10px; padding:16px 20px; margin-bottom:18px; }
+  .reward .big { font-size:22px; font-weight:700; }
+  .reward .earned { font-size:18px; margin:4px 0; }
+  .reward a { color:var(--ok); }
+  .goalbar > div { background:var(--ok); }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Grading queue</h1>
+<p class="sub">Everyone still to grade, across every active run, {{ n }} at a time. Oldest set first.</p>
+
+{% if note %}
+<div class="alert ok" role="status">{{ note }}
+  {% if undo %}<form method="post" action="{{ url_for('queue_undo') }}" class="inline"><input type="hidden" name="set" value="{{ only or '' }}"><button type="submit" class="link focus">Undo</button></form>{% endif %}
+</div>
+{% endif %}
+
+{% if goal_met %}
+<div class="reward" role="status">
+  <div class="big">Goal met: {{ whole.done_today }} graded today.</div>
+  {% if reward %}<div class="earned">You earned: <strong>{{ reward }}</strong></div>{% endif %}
+  <div>You can stop here.{% if kept_today %} You kept {{ kept_today }} good line{{ '' if kept_today == 1 else 's' }} today; <a href="#lines">read them on the way out</a>.{% endif %}</div>
+</div>
+{% endif %}
+<div class="card">
+  <div class="tally">
+    <div><div class="big">{{ whole.left }}</div><div class="quiet">left to grade in {{ whole.sets|length }} set{{ '' if whole.sets|length == 1 else 's' }}</div></div>
+    <div><div class="big">{{ whole.done_today }}</div><div class="quiet">graded today</div></div>
+    <div><div class="big">{{ whole.total - whole.left }} <span class="quiet" style="font-size:16px; font-weight:400">of {{ whole.total }}</span></div><div class="quiet">graded in the active runs</div></div>
+  </div>
+  {% if whole.total %}<div class="bar" role="img" aria-label="{{ whole.total - whole.left }} of {{ whole.total }} graded"><div style="width:{{ 100 * (whole.total - whole.left) / whole.total }}%"></div></div>{% endif %}
+  {% if goal and not goal_met %}
+  <p style="margin:10px 0 0" role="status"><strong>{{ whole.done_today }} of {{ goal }}</strong> toward today's goal{% if reward %} · then: <strong>{{ reward }}</strong>{% endif %}</p>
+  <div class="bar goalbar" role="img" aria-label="{{ whole.done_today }} of {{ goal }} toward today's goal"><div style="width:{{ 100 * whole.done_today / goal }}%"></div></div>
+  {% endif %}
+  {% if focus %}<p style="margin:10px 0 0">Showing only <strong>{{ focus.title }}</strong>{% if focus.course %} ({{ [focus.course, focus.section]|select|join(' · ') }}){% endif %}: {{ focus.left }} left. <a href="{{ url_for('queue_page') }}">Back to the whole queue</a></p>
+  {% elif only %}<p style="margin:10px 0 0">That set has nothing left to grade. <a href="{{ url_for('queue_page') }}">Back to the whole queue</a></p>{% endif %}
+</div>
+
+{% if batch %}
+<h2>Next {{ batch|length }}</h2>
+{% for u in batch %}
+{% set s = u.set %}
+{% set href = unit_href(s.run_id, u.target) %}
+<div class="card item">
+  <div>
+    <h3>{% if href %}<a href="{{ href }}">{{ u.label }}</a>{% else %}{{ u.label }}{% endif %}</h3>
+    <div class="quiet small">{{ s.title }}{% if s.course %} · {{ [s.course, s.section]|select|join(' · ') }}{% endif %} · evaluated {{ s.started_at|local_when }}{% if u.files|length > 1 %} · {{ u.files|length }} files{% endif %}</div>
+    <div style="margin-top:8px">
+      {% if not u.evaluated %}<span class="b b-warn">not evaluated — open the original file</span>{% endif %}
+      {% if u.problems %}<span class="b b-bad">{{ u.problems }} citation problem{{ '' if u.problems == 1 else 's' }}</span>{% endif %}
+      {% if u.history_alerts %}<span class="b b-bad">{{ u.history_alerts }} subsequent-history alert{{ '' if u.history_alerts == 1 else 's' }}</span>{% endif %}
+      {% if u.possibly_fabricated %}<span class="b b-bad">{{ u.possibly_fabricated }} possibly fabricated</span>{% endif %}
+      {% if u.key_total %}<span class="b b-{{ 'ok' if u.key_detected >= u.key_total - 1 else 'warn' if u.key_detected * 2 >= u.key_total else 'bad' }}">answer key {{ u.key_detected }}/{{ u.key_total }}</span>{% endif %}
+      {% if u.later %}<span class="b b-muted">set aside {{ u.later|replace('T', ' ') }}</span>{% endif %}
+    </div>
+    {% if u.levels %}<ul class="lv">{% for l in u.levels %}<li>{{ l.criterion }}: <strong>{{ l.level }}</strong></li>{% endfor %}</ul>{% endif %}
+  </div>
+  <form method="post" action="{{ url_for('queue_mark') }}" class="acts">
+    <input type="hidden" name="run_id" value="{{ s.run_id }}">
+    {% for st in u.stems %}<input type="hidden" name="stem" value="{{ st }}">{% endfor %}
+    <input type="hidden" name="label" value="{{ u.label }}">
+    <input type="hidden" name="set" value="{{ only or '' }}">
+    {% if href %}<a class="btn" href="{{ href }}">Open the report</a>{% endif %}
+    <button type="submit" name="action" value="graded" class="secondary focus">Graded</button>
+    {% if not u.later %}<button type="submit" name="action" value="later" class="secondary focus">Later</button>{% endif %}
+  </form>
+</div>
+{% endfor %}
+{% if q.left > batch|length %}<p class="quiet">{{ q.left - batch|length }} more after these. The next ones appear as you mark these graded.</p>{% endif %}
+{% elif not only %}
+<div class="card"><strong>Nothing waiting.</strong> <span class="quiet">Every student in every active run is marked graded. <a href="{{ url_for('index') }}">Start a run</a> when new work comes in.</span></div>
+{% endif %}
+
+{% if kept %}
+{% set shown = kept if all_lines else kept[:5] %}
+<h2 id="lines">Good lines <span class="quiet" style="font-weight:400">· {{ kept|length }} kept{% if kept_today %}, {{ kept_today }} today{% endif %}</span></h2>
+<div class="card">
+  {% for x in shown %}
+  <form method="post" action="{{ url_for('queue_keep') }}" class="row" style="margin:0 0 12px; align-items:flex-start">
+    <input type="hidden" name="run_id" value="{{ x.run_id }}">
+    <input type="hidden" name="back" value="{{ url_for('queue_page', set=only, lines='all' if all_lines else none) }}">
+    <div style="flex:1"><span class="kept-text">“{{ x.text }}”</span>
+      <div class="quiet small">{{ x.label or x.stem }} · {{ x.title }}</div></div>
+    <button type="submit" name="drop" value="{{ x.id }}" class="link focus" aria-label="Drop this line">Drop</button>
+  </form>
+  {% endfor %}
+  <div class="row">
+    <button type="button" class="secondary focus" id="copyLines">Copy without names</button>
+    {% if kept|length > shown|length %}<a href="{{ url_for('queue_page', set=only, lines='all') }}#lines">Show all {{ kept|length }}</a>{% endif %}
+  </div>
+  <p class="help">Lines you kept while grading, newest first. They stay in each run's folder and are not sent anywhere. Copy them without names to open the next class with what students did well.</p>
+</div>
+{% endif %}
+
+{% if whole.sets %}
+<h2>Sets with work left</h2>
+<table class="sets">
+  <thead><tr><th>Assignment</th><th>Class</th><th>Evaluated</th><th class="num">Left</th><th></th></tr></thead>
+  <tbody>
+  {% for s in whole.sets %}
+    <tr>
+      <td><a href="{{ url_for('run_page', run_id=s.run_id) }}">{{ s.title }}</a>
+        <div class="quiet small">{{ 'discussion' if s.mode == 'discussion' else 'interview notes' if s.mode == 'interview' else 'papers' }}</div></td>
+      <td>{{ [s.course, s.section]|select|join(' · ') or '—' }}</td>
+      <td>{{ s.started_at|local_when }}</td>
+      <td class="num">{{ s.left }} of {{ s.total }}</td>
+      <td style="white-space:nowrap">
+        <a href="{{ url_for('queue_page', set=s.run_id) }}">Only this set</a> ·
+        <form method="post" action="{{ url_for('queue_mark') }}" class="inline rest">
+          <input type="hidden" name="run_id" value="{{ s.run_id }}">
+          <input type="hidden" name="label" value="{{ s.title }}">
+          <input type="hidden" name="action" value="rest">
+          <button type="submit" class="link focus" data-left="{{ s.left }}" data-title="{{ s.title }}">Already graded</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="help"><strong>Already graded</strong> marks everything left in a set as graded: use it for sets you finished before this page existed. It does not add to today's count. To take a set out of the queue without grading it by hand, archive it on <a href="{{ url_for('runs_page') }}">Past runs</a>.</p>
+{% endif %}
+
+<h2>Today's goal</h2>
+<form method="post" action="{{ url_for('queue_goal') }}" class="card">
+  <input type="hidden" name="set" value="{{ only or '' }}">
+  <div class="grid">
+    <div><label for="goal">Students to grade in a day</label>
+      <input type="number" id="goal" name="goal" min="0" max="200" value="{{ goal or '' }}" placeholder="e.g. 10">
+      <div class="help">Leave blank or 0 for no goal. Sets marked “Already graded” do not count.</div></div>
+    <div><label for="reward">What you get when you reach it</label>
+      <input type="text" id="reward" name="reward" maxlength="120" value="{{ reward }}" placeholder="e.g. a walk and the good coffee">
+      <div class="help">Your own words. The page shows it back to you when the goal is met.</div></div>
+  </div>
+  <button type="submit" class="secondary focus" style="margin-top:12px">Save goal</button>
+</form>
+
+<form method="get" action="{{ url_for('queue_page') }}" class="row" style="margin-top:22px; max-width:340px">
+  {% if only %}<input type="hidden" name="set" value="{{ only }}">{% endif %}
+  <label for="n" style="margin:0; white-space:nowrap">Show at a time</label>
+  <input type="number" id="n" name="n" min="1" max="25" value="{{ n }}" style="width:80px">
+  <button type="submit" class="secondary">Set</button>
+</form>
+<p class="help">What you mark here is saved in each run's folder (<span class="mono">_graded.json</span>) under <span class="mono">{{ results_root }}</span>. Nothing is sent anywhere, and no grade is recorded: this page only tracks what you have finished.</p>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('form.rest').forEach(f => f.addEventListener('submit', e => {
+  const b = f.querySelector('button');
+  if (!confirm(`Mark the ${b.dataset.left} left in “${b.dataset.title}” as already graded?`)) e.preventDefault();
+}));
+const copy = document.getElementById('copyLines');
+if (copy) copy.addEventListener('click', () => {
+  const text = [...document.querySelectorAll('.kept-text')].map(e => e.textContent).join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy without names'; }, 1500);
+  });
+});
+</script>
+{% endblock %}

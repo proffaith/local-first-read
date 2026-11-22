@@ -1,0 +1,28 @@
+{% extends "local_eval/base.html" %}
+{% block title %}Packs{% endblock %}
+{% block content %}
+<h1>Assignment packs</h1>
+<p class="sub">Each pack is a JSON file describing one assignment: its instructions, rubric, the readings students were given and (for find-the-flaws assignments) the answer key. Open writing assignments can carry an <strong>expected moves</strong> checklist, kept beside the pack and scored for presence in every submission.</p>
+<p class="quiet">Packs are read from {% for d in pack_dirs %}<span class="mono">{{ d }}</span>{{ ", " if not loop.last }}{% else %}<span class="mono">packs/</span> (none found yet){% endfor %}. Start from <span class="mono">packs/example-memo.json</span>; the README describes every field.</p>
+{% if error %}<div class="alert bad">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert ok">{{ notice }}</div>{% endif %}
+{% if packs %}
+<table>
+  <thead><tr><th>Pack</th><th>Course</th><th>Rubric</th><th>Answer key</th><th>Student readings</th><th>Expected moves</th></tr></thead>
+  <tbody>
+  {% for p in packs %}
+    <tr>
+      <td>{{ p.title }} <span class="quiet small mono">{{ p.path.split('/')[-1] }}</span></td>
+      <td class="quiet">{{ p.course_title }}</td>
+      <td>{% if p.has_rubric %}<span class="b b-ok">yes</span>{% else %}<span class="b b-warn">none</span>{% endif %}</td>
+      <td>{% if p.has_key %}<span class="b b-ok">planted errors</span>{% else %}<span class="quiet">—</span>{% endif %}</td>
+      <td>{% if p.readings %}<span class="b b-ok">{{ p.readings }} · {{ "{:,}".format(p.reading_chars) }} chars</span>{% else %}<span class="quiet">none</span>{% endif %}</td>
+      <td><a href="{{ url_for('moves_page', assignment_id=p.assignment_id) }}">{% if p.has_moves %}<span class="b b-ok">edit</span>{% else %}add{% endif %}</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="quiet">No packs found.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "local_eval/base.html" %}
+{% block title %}Calibration{% endblock %}
+{% block content %}
+<h1>Calibration</h1>
+<p class="sub">How often the local model's suggested level matched your decision, per criterion. Your past decisions are also fed back into the rubric read as exemplars (per course, never pooled across instructors).</p>
+<p class="quiet mono">{{ results_root }}/_calibration/</p>
+
+{% if not courses %}
+<div class="card">No decisions recorded yet. Open a file report and use <strong>Your decisions</strong> to confirm or override the suggested levels.</div>
+{% else %}
+<p>Course:
+  {% for c in courses %}
+    {% if c.course_id == course_id %}<strong>course {{ c.course_id }}</strong>{% else %}<a href="{{ url_for('calibration_page', course=c.course_id) }}">course {{ c.course_id }}</a>{% endif %}
+    <span class="quiet">({{ c.decisions }} decisions{% if c.assignments %}: {{ c.assignments|join('; ') }}{% endif %})</span>{% if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
+
+{% set rub = stats.values()|selectattr('kind', 'equalto', 'rubric')|list %}
+{% if rub %}
+<h2>Rubric criteria</h2>
+<table>
+  <thead><tr><th>Criterion</th><th class="num">Decisions</th><th class="num">Exact agreement</th><th class="num">Within one level</th><th>Tendency</th><th>Recent overrides</th></tr></thead>
+  <tbody>
+  {% for s in rub %}
+    <tr>
+      <td>{{ s.key }}</td>
+      <td class="num">{{ s.n }}</td>
+      <td class="num"><span class="b b-{{ 'ok' if s.exact_rate >= 0.7 else 'warn' if s.exact_rate >= 0.4 else 'bad' }}">{{ (s.exact_rate * 100)|round|int }}%</span></td>
+      <td class="num">{% if level_names %}{{ (s.within_one_rate * 100)|round|int }}%{% else %}<span class="quiet">—</span>{% endif %}</td>
+      <td>{{ s.tendency if s.n >= 3 else '' }}</td>
+      <td>{% for d in s.recent_disagreements %}<div class="quiet">{{ d.model }} → <strong>{{ d.instructor }}</strong>{% if d.reason %}: {{ d.reason }}{% endif %}</div>{% endfor %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% set pl = stats.values()|selectattr('kind', 'equalto', 'planted')|list %}
+{% if pl %}
+<h2>Planted-error statuses</h2>
+<table>
+  <thead><tr><th>Error</th><th class="num">Decisions</th><th class="num">Exact agreement</th><th>Recent overrides</th></tr></thead>
+  <tbody>
+  {% for s in pl %}
+    <tr>
+      <td>{{ s.key }}</td>
+      <td class="num">{{ s.n }}</td>
+      <td class="num"><span class="b b-{{ 'ok' if s.exact_rate >= 0.7 else 'warn' if s.exact_rate >= 0.4 else 'bad' }}">{{ (s.exact_rate * 100)|round|int }}%</span></td>
+      <td>{% for d in s.recent_disagreements %}<div class="quiet">{{ d.model }} → <strong>{{ d.instructor }}</strong>{% if d.reason %}: {{ d.reason }}{% endif %}</div>{% endfor %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Recent decisions</h2>
+<table>
+  <thead><tr><th>When</th><th>Assignment</th><th>Kind</th><th>Key</th><th>Model</th><th>You</th><th>Reason</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr><td class="quiet">{{ e.ts[:16] }}</td><td>{{ e.assignment_title }}</td><td>{{ e.kind }}</td><td>{{ e.key }}</td><td>{{ e.model }}</td><td><strong>{{ e.instructor }}</strong></td><td>{{ e.reason }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

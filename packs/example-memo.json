@@ -1,0 +1,61 @@
+{
+  "title": "Predictive Memo: Duty and Proximate Cause",
+  "course_title": "Example: Torts I",
+  "activity_type": "Predictive office memo",
+  "points_possible": 100,
+  "purpose": "Practice predicting how a court would rule on duty and proximate cause, using the authorities from Week 2.",
+  "task": "Our client, a delivery company, is being sued after a driver's sudden stop caused a package to fall from a stranger's bicycle rack two cars back. Write a 2-3 page predictive memo to the supervising attorney: is the company likely to be found liable in negligence?",
+  "criteria": "State the rule for each element with authority, apply it to our facts, address the strongest counterargument, and reach a clear prediction.",
+  "ai_policy": "AI tools may be used for brainstorming only; all analysis and citations must be your own and verified.",
+  "objectives": [
+    "Explain the elements of a negligence claim",
+    "Apply the foreseeability limits on duty and proximate cause to new facts"
+  ],
+  "sources": ["Week 2 notes: duty and proximate cause"],
+  "readings": [
+    {"title": "Week 2 notes: duty and proximate cause", "file": "readings/week2-duty-proximate-cause.md"}
+  ],
+  "rubric": {
+    "version": 2,
+    "groups": [
+      {
+        "name": "Memo",
+        "levels": [
+          {"name": "Beginning", "value": 1},
+          {"name": "Developing", "value": 2},
+          {"name": "Proficient", "value": 3},
+          {"name": "Exemplary", "value": 4}
+        ],
+        "criteria": [
+          {
+            "name": "Rule statement and use of authority",
+            "cells": {
+              "Beginning": "Rules missing or stated without authority; citations missing or unreliable.",
+              "Developing": "Rules stated but incomplete or loosely tied to the authorities.",
+              "Proficient": "Accurate rules for each element, each supported by an on-point authority.",
+              "Exemplary": "Precise rules synthesized across authorities, every citation accurate and on point."
+            }
+          },
+          {
+            "name": "Application to the facts",
+            "cells": {
+              "Beginning": "Restates the facts or the law without connecting them.",
+              "Developing": "Some application, but key facts are ignored or conclusions are unexplained.",
+              "Proficient": "Applies each element to the specific facts and addresses a counterargument.",
+              "Exemplary": "Thorough, fact-specific analysis that weighs both sides and anticipates the court's reasoning."
+            }
+          },
+          {
+            "name": "Organization and conclusion",
+            "cells": {
+              "Beginning": "No discernible structure; no prediction.",
+              "Developing": "Structure is inconsistent; the prediction is vague.",
+              "Proficient": "Clear memo structure (question, short answer, discussion, conclusion) and a clear prediction.",
+              "Exemplary": "Tight, reader-friendly structure; a confident, well-qualified prediction."
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
